@@ -1,5 +1,5 @@
 # dos-asm-fun
-Some fun NASM assembly source to rember the good ole DOS days
+Some fun NASM assembly source to remember the good ole DOS days
 
 Run with DOSbox https://www.dosbox.com/
 
