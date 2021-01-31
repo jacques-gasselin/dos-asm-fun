@@ -1,9 +1,9 @@
 # dos-asm-fun
 Some fun NASM assembly source to rember the good ole DOS days
 
-Run with DOSbox
+Run with DOSbox https://www.dosbox.com/
 
-compile with nasm
+compile on DOSBox with nasm https://www.nasm.us/pub/nasm/releasebuilds/2.15.05/dos/
 
 `nasm -o test.com test.asm`
 
