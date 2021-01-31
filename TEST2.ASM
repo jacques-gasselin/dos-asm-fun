@@ -5,7 +5,6 @@ section .data
 msg db 'thx for playing', '$'
 section .text
 
-
 start:
 
 	; vga 320x240 @ 256 colors
@@ -20,9 +19,31 @@ start:
 	mov	ax, 1
 	int 33h
 
-    ; Draw Menu
+    ; make es point to the framebuffer
+    mov ax, 0a000h
+    mov es, ax
 
-    
+    ; Draw Menu
+    mov di, 0
+    mov cx, 160
+    mov ax, 1f1fh
+    rep stosw
+    mov cx, 1280
+    mov ax, 1e1eh
+    rep stosw
+    mov cx, 160
+    mov ax, 1d1dh
+    rep stosw
+
+    ; FIXME: use int 10h, ax=1130h to get the character bitmaps
+    mov ax, 0e46h ; F
+    mov bx, 1fh
+    int 10h
+    mov ax, 0e49h ; I
+    mov bx, 1fh
+    int 10h
+
+
 loop:
 	; get mouse state
 	mov	ax, 3
@@ -44,8 +65,6 @@ isButton1Down:
 	add ax, cx   ; ax = y * 200 + x
 	mov di, ax   ; di is offset into video memory
 
-	mov ax, 0a000h ; point to VGA buffer
-	mov	es, ax
 	mov	ax, 4dh  ; light cyan
 	stosb
 
@@ -82,4 +101,20 @@ isKeyEscPressed:
 	mov	ah, 4ch
 	int	21h
 
+hline: ; ax=x, bx=y, cx=width, dx=color 
+    push ax
+    push dx
+    mov dx, ax
+    mov ax, 320
+    mul bx
+    add ax, dx
+    mov di, ax
+
+    pop dx
+    mov ax, dx
+    push cx
+    rep stosb
+    pop cx
+    pop ax
+    ret 
 
