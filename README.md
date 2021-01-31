@@ -5,5 +5,5 @@ Run with DOSbox
 
 compile with nasm
 
-`nasm -o prog.com prog.asm`
+`nasm -o test.com test.asm`
 
