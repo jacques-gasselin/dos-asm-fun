@@ -8,7 +8,7 @@ section .text
 
 start:
 
-	; vga 320x240 @ 256 colors
+	; vga 320x200 @ 256 colors
 	mov	ax, 13h
 	int	10h
 

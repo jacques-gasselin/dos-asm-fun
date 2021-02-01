@@ -15,19 +15,19 @@ section .text
 
 start:
 
-	; vga 320x240 @ 256 colors
-	mov	ax, 13h
-	int	10h
+    ; vga 320x200 @ 256 colors
+    mov ax, 13h
+    int 10h
 
-	; mouse init (soft)
-	mov	ax, 21h
-	int	33h
+    ; mouse init (soft)
+    mov ax, 21h
+    int 33h
 
-	; mouse show
-	mov	ax, 1
-	int 33h
+    ; mouse show
+    mov ax, 1
+    int 33h
     
-    push bp
+    push bp     ; push bp as int 10h [1130h] clobbers it
 
     ; get ROM 8x8 font adress
     mov ax, 1130h
@@ -69,61 +69,61 @@ start:
     call drawString8x8
 
 
-loop:
-	; get mouse state
-	mov	ax, 3
-	int	33h
+.loop:
+        ; get mouse state
+        mov ax, 3
+        int 33h
 
-isButton1Down:
-	; paint if mouse left is down
-	cmp bx, 1
-	jne	isKeyEscPressed
+    .isButton1Down:
+        ; paint if mouse left is down
+        cmp bx, 1
+        jne .isKeyEscPressed
 
-    ; mouse hide
-    mov ax, 2
+        ; mouse hide
+        mov ax, 2
+        int 33h
+
+        ; paint at x = cx, y = dx
+        shr cx, 1    ; x is [0, 640] so divide by 2, shift right 1
+        mov ax, cx
+        mov bx, dx
+        call _offsetDI_XY
+
+        mov ax, 4dh  ; light cyan
+        stosb
+
+        ; mouse show
+        mov ax, 1
+        int 33h
+
+    .isKeyEscPressed:
+        ; is a key pressed? 
+        mov ax, 100h
+        int 16h
+        jz  .loop
+        ; yes a key is pressed, is it ESC?
+        mov ax, 0
+        int 16h
+        cmp ah, 1   ; scancode == ESC
+        jne .loop
+        ; ESC was pressed, time to shut down
+
+    ; mouse reset
+    mov ax, 21h
     int 33h
 
-	; paint at x = cx, y = dx
-	shr cx, 1    ; x is [0, 640] so divide by 2, shift right 1
-    mov ax, cx
-    mov bx, dx
-    call _offsetDI_XY
+    ; back to text mode
+    mov ax, 3
+    int 10h
 
-	mov	ax, 4dh  ; light cyan
-	stosb
+    ; print msg
+    mov dx, msg
+    mov ah, 9
+    int 21h
 
-    ; mouse show
-    mov ax, 1
-    int 33h
-
-isKeyEscPressed:
-	; is a key pressed? 
-    mov ax, 100h
-    int 16h
-	jz	loop
-    ; yes a key is pressed, is it ESC?
-    mov ax, 0
-    int 16h
-    cmp ah, 1   ; scancode == ESC
-    jne loop
-    ; ESC was pressed, time to show down
-
-	; mouse reset
-	mov	ax, 21h
-	int 33h
-
-	; back to text mode
-	mov	ax, 3
-	int	10h
-
-	; print msg
-	mov	dx, msg
-	mov	ah, 9
-	int	21h
-
-	; exit to DOS
-	mov	ah, 4ch
-	int	21h
+    ; exit to DOS
+    mov ah, 4ch
+    int 21h
 
 
 ; ---- Helper functions -----
