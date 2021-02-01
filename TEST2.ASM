@@ -47,10 +47,10 @@ start:
 
     ; Draw Menu
     mov di, 0
-    mov cx, 160
+    mov cx, 160         ; one row
     mov ax, 1f1fh
     rep stosw
-    mov cx, 1280
+    mov cx, 160 * 9
     mov ax, 1e1eh
     rep stosw
     mov cx, 160
@@ -59,9 +59,15 @@ start:
     mov di, 0
 
     mov ax, 1
-    mov bx, 1
+    mov bx, 3
     mov cx, fileStr
-    mov dx, 001eh   ; bg = 1eh, fg = 0
+    mov dx, 1fffh   ; highlight below (bg = transparent, fg = light gray)
+    call drawString8x8
+    mov bx, 1
+    mov dx, 1dffh   ; shadow above (bg = transparent, fg = dark gray)
+    call drawString8x8
+    mov bx, 2
+    mov dx, 00ffh   ; actual text (bg = transparent, fg = black)
     call drawString8x8
 
     mov ax, 40
@@ -177,7 +183,13 @@ drawChar8x8:
         .pickBgColor:
             mov al, dl ; left most bit was 0 so we paint with background
         .drawPixel:
+            cmp al, 0ffh    ; is it transparent?
+            jne  .opaquePixel
+            inc di
+            jmp .drawPixelDone
+        .opaquePixel:
             stosb
+        .drawPixelDone:
             loop .eachColumn
 
         ; go to next row, pitch of 320 - 8 pixels we just drew 
