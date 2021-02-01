@@ -2,7 +2,13 @@
 org 100h
 
 section .data
-msg db 'thx for playing', '$'
+msg     db 'thx for playing', '$'
+fileStr db 'File', 0
+editStr db 'Edit', 0
+
+fontSeg dw 0
+fontOffset dw 0
+
 section .text
 
 start:
@@ -18,6 +24,18 @@ start:
 	; mouse show
 	mov	ax, 1
 	int 33h
+    
+    push bp
+
+    ; get ROM 8x8 font adress
+    mov ax, 1130h
+    mov bh, 03h     ; request 8x8 font addr
+    int 10h
+
+    ; es:bp is font addr, move it to globals
+    mov ax, es
+    mov [fontSeg], ax
+    mov [fontOffset], bp
 
     ; make es point to the framebuffer
     mov ax, 0a000h
@@ -34,14 +52,17 @@ start:
     mov cx, 160
     mov ax, 1d1dh
     rep stosw
+    mov di, 0
 
-    ; FIXME: use int 10h, ax=1130h to get the character bitmaps
-    mov ax, 0e46h ; F
-    mov bx, 1fh
-    int 10h
-    mov ax, 0e49h ; I
-    mov bx, 1fh
-    int 10h
+    mov ax, 1
+    mov bx, 1
+    mov cx, fileStr
+    mov dx, 001eh   ; bg = 1eh, fg = 0
+    call drawString8x8
+
+    mov ax, 40
+    mov cx, editStr
+    call drawString8x8
 
 
 loop:
@@ -59,11 +80,10 @@ isButton1Down:
     int 33h
 
 	; paint at x = cx, y = dx
-	mov	ax, 320
-	mul dx       ; ax is y * 320
 	shr cx, 1    ; x is [0, 640] so divide by 2, shift right 1
-	add ax, cx   ; ax = y * 200 + x
-	mov di, ax   ; di is offset into video memory
+    mov ax, cx
+    mov bx, dx
+    call _offsetDI_XY
 
 	mov	ax, 4dh  ; light cyan
 	stosb
@@ -101,20 +121,103 @@ isKeyEscPressed:
 	mov	ah, 4ch
 	int	21h
 
-hline: ; ax=x, bx=y, cx=width, dx=color 
+
+; ---- Helper functions -----
+
+_offsetDI_XY: ;ax=x, bx=y
     push ax
     push dx
-    mov dx, ax
-    mov ax, 320
-    mul bx
+    mov dx, bx
+    shl dx, 2
+    add dx, bx
+    shl dx, 6
     add ax, dx
     mov di, ax
-
     pop dx
+    pop ax
+    ret
+
+hline: ; ax=x, bx=y, cx=width, dx=color 
+    call _offsetDI_XY
     mov ax, dx
     push cx
     rep stosb
     pop cx
     pop ax
     ret 
+
+drawChar8x8:
+    ; ax = char (clobbered)
+    ; fontSeg:fontOffset points to the char definitions
+    ; es:di points to upperleft pixel in destination
+    ; dx=color (bg = dl, fg = dh)
+    push ds
+    push si
+    mov si, [fontOffset]
+    shl ax, 3
+    add si, ax
+    mov ax, [fontSeg]
+    mov ds, ax
+
+    mov cx, 8
+dcRow:
+    push cx
+    lodsb
+    mov ah, al
+    mov cx, 8
+dcRowCol: 
+    shl ah, 1
+    jnc  dcPickBgColor
+    mov al, dh ; left most bit was 1 so we paint with foreground
+    jmp dcDrawPixel
+dcPickBgColor:
+    mov al, dl ; left most bit was 0 so we paint with background
+dcDrawPixel:
+    stosb
+    loop dcRowCol
+
+    ; go to next row, pitch of 320 - 8 pixels we just drew 
+    add di, 320 - 8
+    pop cx
+    loop dcRow
+
+    pop si
+    pop ds
+    ret
+
+drawString8x8: ;ax=x, bx=y, cx=str, dx=color
+    ; assumes 8x8 font definition is in globals 
+    push ax
+    push bx
+    push cx
+
+    call _offsetDI_XY
+    
+dsLoop:
+    xor ax, ax
+    mov bx, cx
+    mov al, [bx]
+    cmp ax, 0
+    je  dsLoopEnd
+
+    push cx
+  
+    push di
+    call drawChar8x8
+    pop di
+
+    ; use an advance of 8
+    add di, 8
+
+    pop cx
+
+    inc cx
+    jmp dsLoop
+    
+dsLoopEnd:
+
+    pop cx
+    pop bx
+    pop ax
+    ret
 
