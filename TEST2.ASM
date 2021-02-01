@@ -1,3 +1,5 @@
+; Simple program image editing program using mode 13h
+; 
 ; vim:set ft=nasm
 org 100h
 
@@ -36,6 +38,8 @@ start:
     mov ax, es
     mov [fontSeg], ax
     mov [fontOffset], bp
+
+    pop bp
 
     ; make es point to the framebuffer
     mov ax, 0a000h
@@ -160,26 +164,26 @@ drawChar8x8:
     mov ds, ax
 
     mov cx, 8
-dcRow:
-    push cx
-    lodsb
-    mov ah, al
-    mov cx, 8
-dcRowCol: 
-    shl ah, 1
-    jnc  dcPickBgColor
-    mov al, dh ; left most bit was 1 so we paint with foreground
-    jmp dcDrawPixel
-dcPickBgColor:
-    mov al, dl ; left most bit was 0 so we paint with background
-dcDrawPixel:
-    stosb
-    loop dcRowCol
+.eachRow:
+        push cx
+        lodsb
+        mov ah, al
+        mov cx, 8
+    .eachColumn:
+            shl ah, 1
+            jnc .pickBgColor
+            mov al, dh ; left most bit was 1 so we paint with foreground
+            jmp .drawPixel
+        .pickBgColor:
+            mov al, dl ; left most bit was 0 so we paint with background
+        .drawPixel:
+            stosb
+            loop .eachColumn
 
-    ; go to next row, pitch of 320 - 8 pixels we just drew 
-    add di, 320 - 8
-    pop cx
-    loop dcRow
+        ; go to next row, pitch of 320 - 8 pixels we just drew 
+        add di, 320 - 8
+        pop cx
+        loop .eachRow
 
     pop si
     pop ds
@@ -193,28 +197,24 @@ drawString8x8: ;ax=x, bx=y, cx=str, dx=color
 
     call _offsetDI_XY
     
-dsLoop:
-    xor ax, ax
-    mov bx, cx
-    mov al, [bx]
-    cmp ax, 0
-    je  dsLoopEnd
 
-    push cx
-  
+    mov bx, cx      ; bx can be used as a pointer while cx can't
+.eachChar:
+    xor ax, ax
+    mov al, [bx]    ; al = *(str++)
+    inc bx
+    cmp ax, 0
+    je  .finished
+
     push di
     call drawChar8x8
     pop di
 
     ; use an advance of 8
     add di, 8
-
-    pop cx
-
-    inc cx
-    jmp dsLoop
+    jmp .eachChar
     
-dsLoopEnd:
+.finished:
 
     pop cx
     pop bx
