@@ -5,6 +5,7 @@ org 100h
 
 section .data
 msg     db 'thx for playing', '$'
+menuStr db '@', 0
 fileStr db 'File', 0
 editStr db 'Edit', 0
 
@@ -58,21 +59,20 @@ start:
     rep stosw
     mov di, 0
 
-    mov ax, 1
-    mov bx, 3
-    mov cx, fileStr
-    mov dx, 1fffh   ; highlight below (bg = transparent, fg = light gray)
-    call drawString8x8
-    mov bx, 1
-    mov dx, 1dffh   ; shadow above (bg = transparent, fg = dark gray)
-    call drawString8x8
     mov bx, 2
-    mov dx, 00ffh   ; actual text (bg = transparent, fg = black)
-    call drawString8x8
+    mov dx, 001eh   ; (bg = 1eh & transparent, fg = black)
+    
+    mov ax, 1
+    mov cx, menuStr
+    call drawString8x8Embossed
 
-    mov ax, 40
+    add ax, 20
+    mov cx, fileStr
+    call drawString8x8Embossed
+
+    add ax, 40
     mov cx, editStr
-    call drawString8x8
+    call drawString8x8Embossed
 
 
 .loop:
@@ -89,14 +89,8 @@ start:
         mov ax, 2
         int 33h
 
-        ; paint at x = cx, y = dx
+        ; interact at x = cx, y = dx
         shr cx, 1    ; x is [0, 640] so divide by 2, shift right 1
-        mov ax, cx
-        mov bx, dx
-        call _offsetDI_XY
-
-        mov ax, 4dh  ; light cyan
-        stosb
 
         ; mouse show
         mov ax, 1
@@ -161,6 +155,7 @@ drawChar8x8:
     ; fontSeg:fontOffset points to the char definitions
     ; es:di points to upperleft pixel in destination
     ; dx=color (bg = dl, fg = dh)
+    push ax
     push ds
     push si
     mov si, [fontOffset]
@@ -199,9 +194,30 @@ drawChar8x8:
 
     pop si
     pop ds
+    pop ax
     ret
 
-drawString8x8: ;ax=x, bx=y, cx=str, dx=color
+    ;ax=x, bx=y, cx=str, dh=fg-color, dl=bg-color
+drawString8x8Embossed:
+    push dx
+    inc bx
+    mov dh, dl
+    mov dl, 0ffh        ; transparent
+    inc dh              ; bg highlight below
+    call drawString8x8
+    sub bx, 2
+    sub dh, 2           ; bg shadow above
+    call drawString8x8
+    inc bx
+    pop dx
+    push dx
+    mov dl, 0ffh        ; keep dh=fg color for actual text
+    call drawString8x8
+    pop dx
+    ret
+
+    ;ax=x, bx=y, cx=str, dx=color
+drawString8x8:
     ; assumes 8x8 font definition is in globals 
     push ax
     push bx
@@ -215,15 +231,21 @@ drawString8x8: ;ax=x, bx=y, cx=str, dx=color
     xor ax, ax
     mov al, [bx]    ; al = *(str++)
     inc bx
-    cmp ax, 0
+    cmp al, 0
     je  .finished
 
     push di
     call drawChar8x8
     pop di
 
-    ; use an advance of 8
-    add di, 8
+    ; use an advance of 8 unless we have a tiny char like 'i', then use 7
+    cmp al, 'i'
+    je .tightAdvance
+    cmp al, 'l'
+    je .tightAdvance
+    add di, 1
+.tightAdvance:
+    add di, 7
     jmp .eachChar
     
 .finished:
