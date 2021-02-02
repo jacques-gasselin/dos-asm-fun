@@ -23,10 +23,6 @@ start:
     ; mouse init (soft)
     mov ax, 21h
     int 33h
-
-    ; mouse show
-    mov ax, 1
-    int 33h
     
     push bp     ; push bp as int 10h [1130h] clobbers it
 
@@ -46,42 +42,22 @@ start:
     mov ax, 0a000h
     mov es, ax
 
-    ; Draw Menu
-    mov di, 0
-    mov cx, 160         ; one row
-    mov ax, 1f1fh
-    rep stosw
-    mov cx, 160 * 9
-    mov ax, 1e1eh
-    rep stosw
-    mov cx, 160
-    mov ax, 1d1dh
-    rep stosw
-    mov di, 0
+    call DrawBackground
 
-    mov bx, 2
-    mov dx, 001eh   ; (bg = 1eh & transparent, fg = black)
+    call DrawMenu
     
+    ; mouse show
     mov ax, 1
-    mov cx, menuStr
-    call drawString8x8Embossed
-
-    add ax, 20
-    mov cx, fileStr
-    call drawString8x8Embossed
-
-    add ax, 40
-    mov cx, editStr
-    call drawString8x8Embossed
-
+    int 33h
 
 .loop:
+
         ; get mouse state
         mov ax, 3
         int 33h
 
     .isButton1Down:
-        ; paint if mouse left is down
+        ; interact if mouse left is down
         cmp bx, 1
         jne .isKeyEscPressed
 
@@ -127,6 +103,48 @@ start:
 
 
 ; ---- Helper functions -----
+
+DrawBackground:
+    mov di, 320 * 11    ; avoid the part the menu fills
+    mov cx, (320 * (200 - 11)) / 6 ; full screen 
+    mov eax, 11130000h
+.loop:
+    mov ax, 1111h
+    stosd
+    mov ax, 1210h
+    stosw
+    loop .loop
+    ret
+
+DrawMenu:
+    mov di, 0
+    mov cx, 80         ; one row
+    mov eax, 1f1f1f1fh
+    rep stosd
+    mov cx, 80 * 9
+    mov eax, 1e1e1e1eh
+    rep stosd
+    mov cx, 80
+    mov eax, 1d1d1d1dh
+    rep stosd
+    mov di, 0
+
+    mov bx, 2
+    mov dx, 001eh   ; (bg = 1eh & transparent, fg = black)
+    
+    mov ax, 1
+    mov cx, menuStr
+    call drawString8x8Embossed
+
+    add ax, 20
+    mov cx, fileStr
+    call drawString8x8Embossed
+
+    add ax, 40
+    mov cx, editStr
+    call drawString8x8Embossed
+    ret
+
 
 _offsetDI_XY: ;ax=x, bx=y
     push ax
