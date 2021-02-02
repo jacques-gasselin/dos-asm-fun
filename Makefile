@@ -1,4 +1,4 @@
-all: TEST.COM TEST2.COM
+all: TEST.COM TEST2.COM SNAKE.COM
 
 clean:
 	rm -f *.COM
