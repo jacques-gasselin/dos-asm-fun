@@ -12,8 +12,27 @@ MOVE_DOWN           equ 2
 MOVE_LEFT           equ 3
 MOVE_RIGHT          equ 4
 
+VGA_SEGMENT         equ 0a000h
+
+%macro  moveToPixel 2 ; x, y
+%ifnum %2
+    mov di, %2 * 320
+%else
+    mov di, %2      ; di = y
+    shl di, 2       ; di = y * 4
+    add di, %2      ; di = y * 5
+    shl di, 6       ; di = y * 5 * 64 = y * 320
+%endif
+%if %1 != 0
+    add di, %1
+%endif
+%endmacro
+
 section .bss
+mainLoopTicks       resd 1
+
 gameState           resb 1
+gameStateTicks      resd 1
 
 currentLevel        resb 1   
 
@@ -28,10 +47,13 @@ start:
     int 10h
 
     ; make es point to the framebuffer
-    mov ax, 0a000h
+    mov ax, VGA_SEGMENT
     mov es, ax
 
+    ; init the global variables
+    mov dword [mainLoopTicks], 0
     mov byte [gameState], STATE_INTRO
+    mov dword [gameStateTicks], 0
 
 .mainLoop:
     
@@ -58,6 +80,11 @@ start:
     
     call Draw
 
+    ; Update the number of game ticks
+    mov eax, [mainLoopTicks]
+    inc eax
+    mov [mainLoopTicks], eax
+
     jmp .mainLoop
 
 
@@ -74,10 +101,23 @@ start:
 
 ; ah = scancode, al = character
 HandleKeyEvent:
+    ;cmp ah, 48h     ; up-arrow
+    ;cmp ah, 4bh     ; left-arrow
+    ;cmp ah, 4dh     ; right-arrow
+    ;cmp ah, 50h     ; down-arrow
     ret
 
 ; al = new state
 ChangeState:
+    mov ah, [gameState]
+    cmp ah, al
+    je .return
+
+    mov [gameState], al
+    mov dword [gameStateTicks], 0
+    ; TODO use jump table
+    
+    .return:
     ret
 
 Update:
@@ -102,6 +142,10 @@ Update:
     jmp .endCase
     .caseIntro:
         mov byte [currentLevel], 0
+        mov eax, [gameStateTicks]
+        cmp eax, 1000
+        jl  .endCase
+        mov al, STATE_NEW_LEVEL
         call ChangeState
         jmp .endCase
     .caseNewLevel:
@@ -115,7 +159,11 @@ Update:
     .caseGameOver:
         jmp .endCase
     .endCase:
-
+    
+    .return:
+    mov eax, [gameStateTicks]
+    inc eax
+    mov [gameStateTicks], eax
     ret
 
 Draw:
@@ -131,13 +179,20 @@ SetupLevel:
 ; al = level
 DrawLevel:
     cmp al, 0
-    jne .next
+    jne .level1
     call DrawLevel0
-.next:
+    jmp .return
+    .level1:
+    cmp al, 1
+    jne .level2
+    call DrawLevel1
+    jmp .return
+    .level2:
+    .return:
     ret
 
 DrawLevel0:
-    mov di, 0
+    moveToPixel 0, 0
     mov al, 09h             ; level color
     mov ah, al
     push ax
@@ -158,12 +213,16 @@ DrawLevel0:
     .bottomRow:
     rep stosd
 
+    .return:
     ret
 
+DrawLevel1:
+    .return:
+    ret
 
 DrawSnake:
     ; TODO draw the actual snake as it moves
-    mov di, 100 * 320 + 160
+    moveToPixel 160, 100
     mov eax, 0a0a0a0ah
     stosd
     add di, 320 - 4
@@ -173,5 +232,6 @@ DrawSnake:
     add di, 320 - 4
     stosd
 
+    .return:
     ret
 
