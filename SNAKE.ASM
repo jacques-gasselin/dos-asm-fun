@@ -1,11 +1,10 @@
 ; Simple VGA 'snake' game
 ;
 ; TODO
-; - Fix movement direction handling so you can't go backwards
 ; - Apples 
+; - Eating Apple make you longer
 ; - Crashing into walls
 ; - Crashing into self
-; - Snake length 
 ; - Movement speed should be variable
 ;
 
@@ -27,6 +26,8 @@ VGA_SEGMENT         equ 0a000h
 TICKS_PER_SECOND    equ 10
 
 SNAKE_COLOR         equ 0ah
+
+SNAKE_MAX_LENGTH    equ 512
 
 %macro  moveDiToPixel 2 ; x, y
 %ifnum %2
@@ -59,8 +60,12 @@ gameStateTicks      resd 1
 currentLevel        resb 1   
 
 nextMoveDirection   resb 1      ; UP, DOWN, LEFT, RIGHT
-snakeHeadPositionX  resb 1
-snakeHeadPositionY  resb 1
+lastMoveDirection   resb 1      ; UP, DOWN, LEFT, RIGHT
+
+snakeBodyLength     resw 1
+; snake head is first entry
+; snake tail is last entry
+snakeBodyPositions  resb SNAKE_MAX_LENGTH * 2 ;x,y for each body segment
 
 
 section .text
@@ -79,8 +84,8 @@ start:
     mov byte [gameState], STATE_INTRO
     mov dword [gameStateTicks], 0
     mov byte [nextMoveDirection], 0
-    mov byte [snakeHeadPositionX], 160 / 4
-    mov byte [snakeHeadPositionY], 100 / 4
+    mov byte [lastMoveDirection], 0
+    mov word [snakeBodyLength], 0
 
 .mainLoop:
     
@@ -129,31 +134,43 @@ start:
 
 ; ah = scancode, al = character
 HandleKeyEvent:
+    push bx
+    xor bx, bx
+    mov bl, [lastMoveDirection]
+
     .checkUpArrow:
     cmp ah, 48h     ; up-arrow
     jne .checkLeftArrow
+    cmp bl, MOVE_DOWN
+    je .checkLeftArrow
     mov byte [nextMoveDirection], MOVE_UP
     jmp .return
 
     .checkLeftArrow:
     cmp ah, 4bh     ; left-arrow
     jne .checkRightArrow
+    cmp bl, MOVE_RIGHT
+    je .checkRightArrow
     mov byte [nextMoveDirection], MOVE_LEFT
     jmp .return
 
     .checkRightArrow:
     cmp ah, 4dh     ; right-arrow
     jne .checkDownArrow
+    cmp bl, MOVE_LEFT
+    je .checkDownArrow
     mov byte [nextMoveDirection], MOVE_RIGHT
     jmp .return
 
     .checkDownArrow:
     cmp ah, 50h     ; down-arrow
     jne .return
+    cmp bl, MOVE_UP
+    je .return
     mov byte [nextMoveDirection], MOVE_DOWN
-    jmp .return
 
     .return:
+    pop bx
     ret
 
 ; al = new state
@@ -162,9 +179,36 @@ ChangeState:
     cmp ah, al
     je .return
 
+    xor bx, bx
+    mov bl, [gameState]
+    shl bx, 1
+    jmp [bx + .switchJumpTable]
+    .switchJumpTable:
+        dw .endCase
+        dw .caseNewLevel
+        dw .caseInLevel
+        dw .caseAteApple
+        dw .caseCrashed
+        dw .caseGameOver
+    .caseNewLevel:
+        call SetupLevel
+        jmp .endCase
+    .caseInLevel:
+        jmp .endCase
+    .caseAteApple:
+        ; TODO increment score and check for win condition
+        mov al, STATE_IN_LEVEL
+        jmp .endCase
+    .caseCrashed:
+        ; TODO show a restart or quit message
+        mov al, STATE_GAMEOVER
+        jmp .endCase
+    .caseGameOver:
+        jmp .endCase
+    .endCase:
+
     mov [gameState], al
     mov dword [gameStateTicks], 0
-    ; TODO use jump table
     
     .return:
     ret
@@ -222,8 +266,31 @@ Draw:
     call DrawSnake
     ret
 
-; ax = level
 SetupLevel:
+    push ax
+    push bx
+
+    ; clear out the snake body
+    mov bx, 10
+    mov [snakeBodyLength], bx
+    
+    shl bx, 1
+    mov ax, (160 / 4) - 10
+    .loop:
+        mov byte [bx + snakeBodyPositions], al
+        mov byte [bx + snakeBodyPositions + 1], 100 / 4
+        inc ax
+        sub bx, 2
+        jge .loop
+
+    ; TODO clear out the board
+
+    ; Start heading right
+    mov byte [nextMoveDirection], MOVE_RIGHT
+
+    .return:
+    pop bx
+    pop ax
     ret
 
 ; al = level
@@ -269,15 +336,28 @@ DrawLevel1:
 MoveSnake:
     push bx
     push cx
+
+    ; move all the snake segments down one step
+    mov bx, [snakeBodyLength]
+    shl bx, 1
+    .loop:
+        mov ax, [bx + snakeBodyPositions - 2]
+        mov [bx + snakeBodyPositions], ax
+        sub bx, 2
+        jnz .loop
+    
+    .moveHead:
     xor ax, ax
     xor bx, bx
-    xor cx, cx
 
-    mov al, [snakeHeadPositionX]
-    mov bl, [snakeHeadPositionY]
+    mov al, [snakeBodyPositions + 0]
+    mov bl, [snakeBodyPositions + 1]
 
     ; check the direction
+    xor cx, cx
     mov cl, [nextMoveDirection]
+    ; store it so that we can prevent going back over yourself
+    mov [lastMoveDirection], cl
     .startCase:
     cmp cl, MOVE_UP
     je .caseMoveUp
@@ -303,9 +383,10 @@ MoveSnake:
         jmp .endCase
     .endCase:
 
+
     .checkWrapAroundRight:
     cmp ax, 320 / 4
-    jle .noWrapRight
+    jl .noWrapRight
     sub ax, 320 / 4
     .noWrapRight:
     
@@ -323,12 +404,12 @@ MoveSnake:
     
     .checkWrapAroundDown:
     cmp bx, 200 / 4
-    jle .noWrapDown
+    jl .noWrapDown
     sub bx, 200 / 4
     .noWrapDown:
 
-    mov [snakeHeadPositionX], al
-    mov [snakeHeadPositionY], bl
+    mov [snakeBodyPositions + 0], al
+    mov [snakeBodyPositions + 1], bl
 
     .return:
     pop cx
@@ -336,27 +417,49 @@ MoveSnake:
     ret
 
 DrawSnake:
-    ; TODO draw the actual snake as it moves
     push bx
-    xor ax, ax
-    xor bx, bx
 
-    mov al, [snakeHeadPositionX]
-    mov bl, [snakeHeadPositionY]
-    ; make them into pixel -> cell coorinates * 4 = pixel coordinates
-    shl ax, 2
-    shl bx, 2
-    moveDiToPixel ax, bx
+    mov cx, [snakeBodyLength]
+    cmp cx, 1
+    jl .return
+
+    .eraseLastTail:
+    colorDuplicated4TimeInEAX 0
+    call localFuncDrawBodySegment
+    dec cx
+
+    .drawBody:
     colorDuplicated4TimeInEAX SNAKE_COLOR
-    stosd
-    add di, 320 - 4
-    stosd
-    add di, 320 - 4
-    stosd
-    add di, 320 - 4
-    stosd
+    .loop:
+        call localFuncDrawBodySegment
+        dec cx
+        jge .loop
 
     .return:
     pop bx
     ret
 
+    ; eax = 4 x color, cx = segment index
+    ; bx, dx, di clobbered
+    localFuncDrawBodySegment:
+        push cx
+        mov bx, cx
+        shl bx, 1
+        add bx, snakeBodyPositions
+        xor dx, dx
+        xor cx, cx
+        mov cl, [bx]
+        mov dl, [bx + 1]
+        ; make them into pixel -> cell coorinates * 4 = pixel coordinates
+        shl cx, 2
+        shl dx, 2
+        moveDiToPixel cx, dx
+        stosd
+        add di, 320 - 4
+        stosd
+        add di, 320 - 4
+        stosd
+        add di, 320 - 4
+        stosd
+        pop cx
+        ret
