@@ -13,8 +13,11 @@ MOVE_LEFT           equ 3
 MOVE_RIGHT          equ 4
 
 VGA_SEGMENT         equ 0a000h
+TICKS_PER_SECOND    equ 10
 
-%macro  moveToPixel 2 ; x, y
+SNAKE_COLOR         equ 0ah
+
+%macro  moveDiToPixel 2 ; x, y
 %ifnum %2
     mov di, %2 * 320
 %else
@@ -28,6 +31,14 @@ VGA_SEGMENT         equ 0a000h
 %endif
 %endmacro
 
+%macro  colorDuplicated4TimeInEAX 1 ; color as byte
+    mov al, %1
+    mov ah, al
+    push ax
+    push ax
+    pop eax
+%endmacro
+
 section .bss
 mainLoopTicks       resd 1
 
@@ -37,7 +48,9 @@ gameStateTicks      resd 1
 currentLevel        resb 1   
 
 nextMoveDirection   resb 1      ; UP, DOWN, LEFT, RIGHT
-snakeHeadPosition   resb 2      ; x, y
+snakeHeadPositionX  resb 1
+snakeHeadPositionY  resb 1
+
 
 section .text
 
@@ -54,6 +67,8 @@ start:
     mov dword [mainLoopTicks], 0
     mov byte [gameState], STATE_INTRO
     mov dword [gameStateTicks], 0
+    mov byte [snakeHeadPositionX], 160 / 4
+    mov byte [snakeHeadPositionY], 100 / 4
 
 .mainLoop:
     
@@ -80,6 +95,7 @@ start:
     
     call Draw
 
+
     ; Update the number of game ticks
     mov eax, [mainLoopTicks]
     inc eax
@@ -101,10 +117,31 @@ start:
 
 ; ah = scancode, al = character
 HandleKeyEvent:
-    ;cmp ah, 48h     ; up-arrow
-    ;cmp ah, 4bh     ; left-arrow
-    ;cmp ah, 4dh     ; right-arrow
-    ;cmp ah, 50h     ; down-arrow
+    .checkUpArrow:
+    cmp ah, 48h     ; up-arrow
+    jne .checkLeftArrow
+    mov byte [nextMoveDirection], MOVE_UP
+    jmp .return
+
+    .checkLeftArrow:
+    cmp ah, 4bh     ; left-arrow
+    jne .checkRightArrow
+    mov byte [nextMoveDirection], MOVE_LEFT
+    jmp .return
+
+    .checkRightArrow:
+    cmp ah, 4dh     ; right-arrow
+    jne .checkDownArrow
+    mov byte [nextMoveDirection], MOVE_RIGHT
+    jmp .return
+
+    .checkDownArrow:
+    cmp ah, 50h     ; down-arrow
+    jne .return
+    mov byte [nextMoveDirection], MOVE_DOWN
+    jmp .return
+
+    .return:
     ret
 
 ; al = new state
@@ -121,8 +158,8 @@ ChangeState:
     ret
 
 Update:
+    xor ax, ax
     mov al, [gameState]
-    mov ah, 0
     ; TODO make jump table work
     ; jmp .jumpTable[ax * 2]
     ; .jumpTable dw .caseIntro, .caseNewLevel, .caseInLevel, .caseAteApple, .caseCrashed, .caseGameOver, .endCase
@@ -143,14 +180,23 @@ Update:
     .caseIntro:
         mov byte [currentLevel], 0
         mov eax, [gameStateTicks]
-        cmp eax, 1000
+        cmp eax, TICKS_PER_SECOND * 1
         jl  .endCase
         mov al, STATE_NEW_LEVEL
         call ChangeState
         jmp .endCase
     .caseNewLevel:
+        mov eax, [gameStateTicks]
+        cmp eax, TICKS_PER_SECOND * 1
+        jl  .endCase
+        mov al, STATE_IN_LEVEL
+        call ChangeState
         jmp .endCase
     .caseInLevel:
+        mov eax, [gameStateTicks]
+        and eax, 0ffh               ; only move once 255 ticks have passed since last time
+        jnz  .endCase
+        call MoveSnake
         jmp .endCase
     .caseAteApple:
         jmp .endCase
@@ -159,7 +205,7 @@ Update:
     .caseGameOver:
         jmp .endCase
     .endCase:
-    
+   
     .return:
     mov eax, [gameStateTicks]
     inc eax
@@ -192,12 +238,8 @@ DrawLevel:
     ret
 
 DrawLevel0:
-    moveToPixel 0, 0
-    mov al, 09h             ; level color
-    mov ah, al
-    push ax
-    push ax
-    pop eax                 ; replicate to 4 bytes
+    moveDiToPixel 0, 0
+    colorDuplicated4TimeInEAX 09h      ; level 0 color
     mov cx, (320 / 4) * 4   ; 4 rows
     .topRow:
     rep stosd
@@ -220,10 +262,88 @@ DrawLevel1:
     .return:
     ret
 
+MoveSnake:
+    push bx
+    push cx
+    xor ax, ax
+    xor bx, bx
+    xor cx, cx
+
+    mov al, [snakeHeadPositionX]
+    mov bl, [snakeHeadPositionY]
+
+    ; check the direction
+    mov cl, [nextMoveDirection]
+    .startCase:
+    cmp cl, MOVE_UP
+    je .caseMoveUp
+    cmp cl, MOVE_LEFT
+    je .caseMoveLeft
+    cmp cl, MOVE_RIGHT
+    je .caseMoveRight
+    cmp cl, MOVE_DOWN
+    je .caseMoveDown
+    jmp .endCase
+
+    .caseMoveUp:
+        dec bx
+        jmp .endCase
+    .caseMoveLeft:
+        dec ax
+        jmp .endCase
+    .caseMoveRight:
+        inc ax
+        jmp .endCase
+    .caseMoveDown:
+        inc bx
+        jmp .endCase
+    .endCase:
+
+    .checkWrapAroundRight:
+    cmp ax, 320 / 4
+    jle .noWrapRight
+    sub ax, 320 / 4
+    .noWrapRight:
+    
+    .checkWrapAroundLeft:
+    cmp ax, 0
+    jge .noWrapLeft
+    add ax, 320 / 4
+    .noWrapLeft:
+
+    .checkWrapAroundUp:
+    cmp bx, 0
+    jge .noWrapUp
+    add bx, 200 / 4
+    .noWrapUp:
+    
+    .checkWrapAroundDown:
+    cmp bx, 200 / 4
+    jle .noWrapDown
+    sub bx, 200 / 4
+    .noWrapDown:
+
+    mov [snakeHeadPositionX], al
+    mov [snakeHeadPositionY], bl
+
+    .return:
+    pop cx
+    pop bx
+    ret
+
 DrawSnake:
     ; TODO draw the actual snake as it moves
-    moveToPixel 160, 100
-    mov eax, 0a0a0a0ah
+    push bx
+    xor ax, ax
+    xor bx, bx
+
+    mov al, [snakeHeadPositionX]
+    mov bl, [snakeHeadPositionY]
+    ; make them into pixel -> cell coorinates * 4 = pixel coordinates
+    shl ax, 2
+    shl bx, 2
+    moveDiToPixel ax, bx
+    colorDuplicated4TimeInEAX SNAKE_COLOR
     stosd
     add di, 320 - 4
     stosd
@@ -233,5 +353,6 @@ DrawSnake:
     stosd
 
     .return:
+    pop bx
     ret
 
