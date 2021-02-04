@@ -1,3 +1,14 @@
+; Simple VGA 'snake' game
+;
+; TODO
+; - Fix movement direction handling so you can't go backwards
+; - Apples 
+; - Crashing into walls
+; - Crashing into self
+; - Snake length 
+; - Movement speed should be variable
+;
+
 org 100h
 
 STATE_INTRO         equ 0
@@ -67,6 +78,7 @@ start:
     mov dword [mainLoopTicks], 0
     mov byte [gameState], STATE_INTRO
     mov dword [gameStateTicks], 0
+    mov byte [nextMoveDirection], 0
     mov byte [snakeHeadPositionX], 160 / 4
     mov byte [snakeHeadPositionY], 100 / 4
 
@@ -158,25 +170,17 @@ ChangeState:
     ret
 
 Update:
-    xor ax, ax
-    mov al, [gameState]
-    ; TODO make jump table work
-    ; jmp .jumpTable[ax * 2]
-    ; .jumpTable dw .caseIntro, .caseNewLevel, .caseInLevel, .caseAteApple, .caseCrashed, .caseGameOver, .endCase
-    .startCase:
-    cmp al, STATE_INTRO
-    je .caseIntro
-    cmp al, STATE_NEW_LEVEL
-    je .caseNewLevel
-    cmp al, STATE_IN_LEVEL
-    je .caseInLevel
-    cmp al, STATE_ATE_APPLE
-    je .caseAteApple
-    cmp al, STATE_CRASHED
-    je .caseCrashed
-    cmp al, STATE_GAMEOVER
-    je .caseGameOver
-    jmp .endCase
+    xor bx, bx
+    mov bl, [gameState]
+    shl bx, 1
+    jmp [bx + .switchJumpTable]
+    .switchJumpTable:
+        dw .caseIntro
+        dw .caseNewLevel
+        dw .caseInLevel
+        dw .caseAteApple
+        dw .caseCrashed
+        dw .caseGameOver
     .caseIntro:
         mov byte [currentLevel], 0
         mov eax, [gameStateTicks]
@@ -194,7 +198,7 @@ Update:
         jmp .endCase
     .caseInLevel:
         mov eax, [gameStateTicks]
-        and eax, 0ffh               ; only move once 255 ticks have passed since last time
+        and eax, 07fh               ; only move once 127 ticks have passed since last time
         jnz  .endCase
         call MoveSnake
         jmp .endCase
