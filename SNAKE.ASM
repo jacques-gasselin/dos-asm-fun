@@ -1,8 +1,8 @@
 ; Simple VGA 'snake' game
 ;
 ; TODO
-; - Apples 
 ; - Eating Apple make you longer
+; - New Apple in Level after you eat one
 ; - Crashing into walls
 ; - Crashing into self
 ; - Movement speed should be variable
@@ -26,6 +26,7 @@ VGA_SEGMENT         equ 0a000h
 TICKS_PER_SECOND    equ 10
 
 SNAKE_COLOR         equ 0ah
+APPLE_COLOR         equ 0dh
 
 SNAKE_MAX_LENGTH    equ 512
 
@@ -83,6 +84,7 @@ start:
     mov dword [mainLoopTicks], 0
     mov byte [gameState], STATE_INTRO
     mov dword [gameStateTicks], 0
+    mov byte [currentLevel], 0
     mov byte [nextMoveDirection], 0
     mov byte [lastMoveDirection], 0
     mov word [snakeBodyLength], 0
@@ -112,11 +114,7 @@ start:
     
     call Draw
 
-
-    ; Update the number of game ticks
-    mov eax, [mainLoopTicks]
-    inc eax
-    mov [mainLoopTicks], eax
+    add dword [mainLoopTicks], 1
 
     jmp .mainLoop
 
@@ -135,38 +133,39 @@ start:
 ; ah = scancode, al = character
 HandleKeyEvent:
     push bx
-    xor bx, bx
-    mov bl, [lastMoveDirection]
+    movzx bx, byte [lastMoveDirection]
 
-    .checkUpArrow:
     cmp ah, 48h     ; up-arrow
-    jne .checkLeftArrow
-    cmp bl, MOVE_DOWN
-    je .checkLeftArrow
+    je .upArrow
+    cmp ah, 4bh     ; left-arrow
+    je .leftArrow
+    cmp ah, 4dh     ; right-arrow
+    je .rightArrow
+    cmp ah, 50h     ; down-arrow
+    je .downArrow
+    jmp .return
+
+    .upArrow:
+    cmp bl, MOVE_DOWN       ; would this be going back ? 
+    je  .return
     mov byte [nextMoveDirection], MOVE_UP
     jmp .return
 
-    .checkLeftArrow:
-    cmp ah, 4bh     ; left-arrow
-    jne .checkRightArrow
-    cmp bl, MOVE_RIGHT
-    je .checkRightArrow
+    .leftArrow:
+    cmp bl, MOVE_RIGHT      ; would this be going back ?
+    je  .return
     mov byte [nextMoveDirection], MOVE_LEFT
     jmp .return
 
-    .checkRightArrow:
-    cmp ah, 4dh     ; right-arrow
-    jne .checkDownArrow
-    cmp bl, MOVE_LEFT
-    je .checkDownArrow
+    .rightArrow:            
+    cmp bl, MOVE_LEFT       ; would this be going back ?  
+    je  .return
     mov byte [nextMoveDirection], MOVE_RIGHT
     jmp .return
 
-    .checkDownArrow:
-    cmp ah, 50h     ; down-arrow
-    jne .return
-    cmp bl, MOVE_UP
-    je .return
+    .downArrow:
+    cmp bl, MOVE_UP         ; would this be going back ?
+    je  .return
     mov byte [nextMoveDirection], MOVE_DOWN
 
     .return:
@@ -179,8 +178,7 @@ ChangeState:
     cmp ah, al
     je .return
 
-    xor bx, bx
-    mov bl, [gameState]
+    movzx bx, byte [gameState]
     shl bx, 1
     jmp [bx + .switchJumpTable]
     .switchJumpTable:
@@ -213,57 +211,79 @@ ChangeState:
     .return:
     ret
 
+; ---- Update Routines -----
+; Update
+;   +-- UpdateStateIntro
+;   +--    ...StateNewLevel
+;   |           +-- ChangeState ( STATE_IN_LEVEL )
+;   +--    ...StateInLevel
+;   |           +-- MoveSnake
+;   |                   +-- ChangeState ( STATE_ATE_APPLE | STATE_CRASHED )
+;   +--    ...StateAteApple
+;   |           +-- ChangeState ( STATE_IN_LEVEL )
+;   +--    ...StateCrashed
+;   |           +-- ChangeState ( STATE_GAMEOVER )
+;   +--    ...StateGameOver
+;
+;   These call other helpers:
+;   
+;       ChangeState
+;       MoveSnake
+;       SetupLevel
+;
+
 Update:
-    xor bx, bx
-    mov bl, [gameState]
+    movzx bx, byte [gameState]
     shl bx, 1
-    jmp [bx + .switchJumpTable]
-    .switchJumpTable:
-        dw .caseIntro
-        dw .caseNewLevel
-        dw .caseInLevel
-        dw .caseAteApple
-        dw .caseCrashed
-        dw .caseGameOver
-    .caseIntro:
-        mov byte [currentLevel], 0
-        mov eax, [gameStateTicks]
-        cmp eax, TICKS_PER_SECOND * 1
-        jl  .endCase
-        mov al, STATE_NEW_LEVEL
-        call ChangeState
-        jmp .endCase
-    .caseNewLevel:
-        mov eax, [gameStateTicks]
-        cmp eax, TICKS_PER_SECOND * 1
-        jl  .endCase
-        mov al, STATE_IN_LEVEL
-        call ChangeState
-        jmp .endCase
-    .caseInLevel:
-        mov eax, [gameStateTicks]
-        and eax, 07fh               ; only move once 127 ticks have passed since last time
-        jnz  .endCase
-        call MoveSnake
-        jmp .endCase
-    .caseAteApple:
-        jmp .endCase
-    .caseCrashed:
-        jmp .endCase
-    .caseGameOver:
-        jmp .endCase
-    .endCase:
-   
+    call [bx + .switchCallTable]
+    jmp .return
+    .switchCallTable:
+        dw UpdateStateIntro
+        dw UpdateStateNewLevel
+        dw UpdateStateInLevel
+        dw UpdateStateAteApple
+        dw UpdateStateCrashed
+        dw UpdateStateGameOver
     .return:
-    mov eax, [gameStateTicks]
-    inc eax
-    mov [gameStateTicks], eax
+    add dword [gameStateTicks], 1
     ret
 
-Draw:
-    mov al, [currentLevel]    ; level number
-    call DrawLevel
-    call DrawSnake
+UpdateStateIntro:
+    mov eax, [gameStateTicks]
+    cmp eax, TICKS_PER_SECOND * 1
+    jl  .return
+    mov al, STATE_NEW_LEVEL
+    call ChangeState
+    .return:
+    ret
+
+UpdateStateNewLevel:
+    mov eax, [gameStateTicks]
+    cmp eax, TICKS_PER_SECOND * 1
+    jl  .return
+    mov al, STATE_IN_LEVEL
+    call ChangeState
+    .return:
+    ret
+
+UpdateStateInLevel:
+    mov eax, [gameStateTicks]
+    and eax, 07fh  ; only move once 127 ticks have passed since last time
+    jnz .return
+    call MoveSnake
+    .return:
+    ret
+
+UpdateStateAteApple:
+    .return:
+    ret
+
+UpdateStateCrashed:
+    .return:
+    ret
+
+UpdateStateGameOver:
+    .return:
     ret
 
 SetupLevel:
@@ -293,46 +313,6 @@ SetupLevel:
     pop ax
     ret
 
-; al = level
-DrawLevel:
-    cmp al, 0
-    jne .level1
-    call DrawLevel0
-    jmp .return
-    .level1:
-    cmp al, 1
-    jne .level2
-    call DrawLevel1
-    jmp .return
-    .level2:
-    .return:
-    ret
-
-DrawLevel0:
-    moveDiToPixel 0, 0
-    colorDuplicated4TimeInEAX 09h      ; level 0 color
-    mov cx, (320 / 4) * 4   ; 4 rows
-    .topRow:
-    rep stosd
-
-    mov cx, 200 - 8         ; all rows but 8
-    .leftAndRight:
-    stosd
-    add di, 320 - 8
-    stosd
-    loop .leftAndRight
-
-    mov cx, (320 / 4) * 4   ; 4 rows
-    .bottomRow:
-    rep stosd
-
-    .return:
-    ret
-
-DrawLevel1:
-    .return:
-    ret
-
 MoveSnake:
     push bx
     push cx
@@ -347,15 +327,11 @@ MoveSnake:
         jnz .loop
     
     .moveHead:
-    xor ax, ax
-    xor bx, bx
-
-    mov al, [snakeBodyPositions + 0]
-    mov bl, [snakeBodyPositions + 1]
+    movzx ax, byte [snakeBodyPositions + 0]
+    movzx bx, byte [snakeBodyPositions + 1]
 
     ; check the direction
-    xor cx, cx
-    mov cl, [nextMoveDirection]
+    movzx cx, byte [nextMoveDirection]
     ; store it so that we can prevent going back over yourself
     mov [lastMoveDirection], cl
     .startCase:
@@ -416,6 +392,80 @@ MoveSnake:
     pop bx
     ret
 
+; ---- Draw Routines -----
+; Draw
+;   +-- DrawLevel
+;   |       +-- DrawLevel0
+;   |
+;   +-- DrawApple
+;   |
+;   +-- DrawSnake
+
+Draw:
+    ; make es point to the framebuffer
+    mov ax, VGA_SEGMENT
+    mov es, ax
+
+    movzx ax, byte [currentLevel]    ; level number
+    call DrawLevel
+    call DrawApple
+    call DrawSnake
+    ret
+
+
+; al = level
+DrawLevel:
+    cmp al, 0
+    jne .level1
+    call DrawLevel0
+    jmp .return
+    .level1:
+    cmp al, 1
+    jne .level2
+    call DrawLevel1
+    jmp .return
+    .level2:
+    .return:
+    ret
+
+DrawLevel0:
+    moveDiToPixel 0, 0
+    colorDuplicated4TimeInEAX 09h      ; level 0 color
+    mov cx, (320 / 4) * 4   ; 4 rows
+    .topRow:
+    rep stosd
+
+    mov cx, 200 - 8         ; all rows but 8
+    .leftAndRight:
+    stosd
+    add di, 320 - 8
+    stosd
+    loop .leftAndRight
+
+    mov cx, (320 / 4) * 4   ; 4 rows
+    .bottomRow:
+    rep stosd
+
+    .return:
+    ret
+
+DrawLevel1:
+    .return:
+    ret
+
+
+DrawApple:
+    colorDuplicated4TimeInEAX APPLE_COLOR
+    moveDiToPixel 40, 40
+    stosd
+    add di, 320 - 4
+    stosd
+    add di, 320 - 4
+    stosd
+    add di, 320 - 4
+    stosd
+    ret
+
 DrawSnake:
     push bx
 
@@ -446,10 +496,8 @@ DrawSnake:
         mov bx, cx
         shl bx, 1
         add bx, snakeBodyPositions
-        xor dx, dx
-        xor cx, cx
-        mov cl, [bx]
-        mov dl, [bx + 1]
+        movzx cx, byte [bx]
+        movzx dx, byte [bx + 1]
         ; make them into pixel -> cell coorinates * 4 = pixel coordinates
         shl cx, 2
         shl dx, 2
