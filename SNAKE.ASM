@@ -562,9 +562,7 @@ Draw:
     mov bx, ax
     and bx, REDRAW_HEAD_AND_TAIL
     jz  .return
-    call DrawSnake
-    ; TODO optimized
-    ;call DrawSnakeHeadAndTail
+    call DrawSnakeHeadAndTail
 
     .testDrawApples:
     mov bx, ax
@@ -576,6 +574,18 @@ Draw:
     mov byte [redrawFlags], 0
     ret
 
+; Draws a 4x4 cell and advances `di` by 4
+_Draw4x4CellAtDiWithColorInEAX:
+    stosd
+    add di, 320 - 4
+    stosd
+    add di, 320 - 4
+    stosd
+    add di, 320 - 4
+    stosd
+    sub di, 320 * 3
+    ret
+
 DrawFullRedraw:
     moveRegToPixel di, 0, 0
     mov si, cells
@@ -584,15 +594,8 @@ DrawFullRedraw:
         mov dx, CELL_COLS
         .colLoop:
             lodsb ; cell color in al
-            mov ah, al
-            times 2 stosw
-            add di, 320 - 4
-            times 2 stosw
-            add di, 320 - 4
-            times 2 stosw
-            add di, 320 - 4
-            times 2 stosw
-            sub di, 320 * 3
+            colorDuplicated4TimeInEAX al
+            call _Draw4x4CellAtDiWithColorInEAX
             dec dx
             jnz .colLoop
         add di, 320 * 3
@@ -614,13 +617,7 @@ DrawSnake:
         shl bx, 2
         moveRegToPixel di, ax, bx
         colorDuplicated4TimeInEAX EMPTY_COLOR
-        stosd
-        add di, 320 - 4
-        stosd
-        add di, 320 - 4
-        stosd
-        add di, 320 - 4
-        stosd
+        call _Draw4x4CellAtDiWithColorInEAX
 
     .loop:
         lodsw
@@ -630,18 +627,43 @@ DrawSnake:
         shl bx, 2
         moveRegToPixel di, ax, bx
         colorDuplicated4TimeInEAX SNAKE_COLOR
-        stosd
-        add di, 320 - 4
-        stosd
-        add di, 320 - 4
-        stosd
-        add di, 320 - 4
-        stosd
+        call _Draw4x4CellAtDiWithColorInEAX
         loop .loop
 
     .return:
     pop ax
     ret
+
+DrawSnakeHeadAndTail:
+    push ax
+    mov si, snakeBodyPositions
+    mov cx, [snakeBodyLength]
+    .clearTail:
+        mov bx, cx
+        shl bx, 1
+        mov ax, [si + bx]
+        movzx bx, ah
+        xor ah, ah
+        shl ax, 2
+        shl bx, 2
+        moveRegToPixel di, ax, bx
+        colorDuplicated4TimeInEAX EMPTY_COLOR
+        call _Draw4x4CellAtDiWithColorInEAX
+
+    .drawHead:
+        lodsw
+        movzx bx, ah
+        xor ah, ah
+        shl ax, 2
+        shl bx, 2
+        moveRegToPixel di, ax, bx
+        colorDuplicated4TimeInEAX SNAKE_COLOR
+        call _Draw4x4CellAtDiWithColorInEAX
+
+    .return:
+    pop ax
+    ret
+
 
 DrawApples:
     ret
