@@ -1,10 +1,6 @@
 ; Simple VGA 'snake' game
 ;
 ; TODO
-; - Eating Apple make you longer
-; - New Apple in Level after you eat one
-; - Crashing into walls
-; - Crashing into self
 ; - Movement speed should be variable
 ;
 
@@ -32,9 +28,11 @@ REDRAW_APPLES           equ 8h
 REDRAW_ALL              equ REDRAW_WALLS + REDRAW_SNAKE + REDRAW_HEAD_AND_TAIL + REDRAW_APPLES
 
 EMPTY_COLOR         equ 0h
-WALL_COLOR          equ 0ch
+WALL_COLOR          equ 1ch
 SNAKE_COLOR         equ 0ah
-APPLE_COLOR         equ 0dh
+APPLE_COLOR         equ 0ch
+
+APPLES_TO_EAT       equ 10
 
 SNAKE_MAX_LENGTH    equ 512
 
@@ -91,6 +89,7 @@ gameState           resb 1
 gameStateTicks      resd 1
 
 currentLevel        resb 1   
+applesEaten         resb 1
 
 nextMoveDirection   resb 1      ; UP, DOWN, LEFT, RIGHT
 lastMoveDirection   resb 1      ; UP, DOWN, LEFT, RIGHT
@@ -210,7 +209,9 @@ ChangeState:
     cmp ah, al
     je .return
 
-    movzx bx, byte [gameState]
+    mov [gameState], al
+
+    movzx bx, al
     shl bx, 1
     jmp [bx + .switchJumpTable]
     .switchJumpTable:
@@ -226,18 +227,30 @@ ChangeState:
     .caseInLevel:
         jmp .endCase
     .caseAteApple:
-        ; TODO increment score and check for win condition
-        mov al, STATE_IN_LEVEL
+        ; increment score
+        mov al, [applesEaten]
+        inc al
+        mov [applesEaten], al
+        .continueLevel:
+        movzx ax, [snakeBodyPositions + 0]
+        movzx bx, [snakeBodyPositions + 1]
+        ; clear the apple away
+        moveRegToCell di, ax, bx
+        mov al, EMPTY_COLOR
+        stosb
+        ; elongate snake
+        mov ax, 10
+        call LengthenSnake
+        ; TODO generate new apple
+        call PlaceNewApple
         jmp .endCase
     .caseCrashed:
         ; TODO show a restart or quit message
-        mov al, STATE_GAMEOVER
         jmp .endCase
     .caseGameOver:
         jmp .endCase
     .endCase:
 
-    mov [gameState], al
     mov dword [gameStateTicks], 0
     
     .return:
@@ -313,6 +326,21 @@ UpdateStateInLevel:
     ret
 
 UpdateStateAteApple:
+    mov al, [applesEaten]
+    cmp al, APPLES_TO_EAT
+    jl .continueLevel
+    
+    ; go to next level
+    mov al, [currentLevel]
+    inc al
+    mov [currentLevel], al
+    mov al, STATE_NEW_LEVEL
+    call ChangeState
+    jmp .return
+
+    .continueLevel:
+    mov al, STATE_IN_LEVEL
+    call ChangeState
     .return:
     ret
 
@@ -324,9 +352,61 @@ UpdateStateGameOver:
     .return:
     ret
 
+PlaceNewApple:
+    mov eax, [mainLoopTicks]
+    .whilePlaceNotFound:
+        ; generate a random value off the main timer
+        mov ebx, eax
+        add eax, 113        ; a low prime
+        xor ebx, 23456789h
+        add ebx, 87654321h
+        ror ebx, 11
+        and bx, 0fffh       ; % 4096
+        cmp bx, CELLS_COUNT ; < 4000?
+        jge .whilePlaceNotFound
+        mov di, cells
+        add di, bx
+        ; what's in the cell now
+        mov bl, [di]
+        cmp bl, EMPTY_COLOR ; empty?
+        jne .whilePlaceNotFound
+    
+    mov al, APPLE_COLOR
+    stosb
+    mov al, [redrawFlags]
+    or  al, REDRAW_APPLES
+    mov [redrawFlags], al
+
+    ret
+
+; ax = +length 
+LengthenSnake:
+    mov bx, [snakeBodyLength]
+    
+    ; copy the body down
+    mov di, bx
+    shl di, 1
+    add di, snakeBodyPositions 
+    mov si, di
+    sub si, 2
+    mov cx, ax
+    rep movsw
+
+    add bx, ax
+    mov [snakeBodyLength], bx
+    
+    mov al, [redrawFlags]
+    or  al, REDRAW_SNAKE
+    mov [redrawFlags], al
+
+    ret
+
 SetupLevel:
     push ax
     push bx
+
+    ; clear out the number of apples eaten
+    mov byte [applesEaten], 0
 
     ; clear out the snake body
     mov bx, 10
@@ -357,18 +437,30 @@ SetupLevel:
 
     ; Setup the new level walls
     mov al, [currentLevel]
-    ;cmp al, 0
-    ;jne .level1
+    and al, 03h     ; limit to 4 levels now
+
+    cmp al, 0
+    jne .level1
     call SetupLevel0
     jmp .return
 
     .level1:
     cmp al, 1
-    jne .return
-    ; TODO level 1
+    jne .level2
+    call SetupLevel1
     
+    .level2:
+    cmp al, 2
+    jne .level3
+    call SetupLevel2
+
+    .level3:
+    cmp al, 2
+    jne .return
+    call SetupLevel3
 
     .return:
+    call PlaceNewApple
     mov byte [redrawFlags], REDRAW_ALL
 
     pop bx
@@ -404,13 +496,38 @@ SetupLevel0:
     rep stosb
 
 
-    ; first Apple
-    moveRegToCell di, 10, 10
-    mov al, APPLE_COLOR
-    stosb
+    .return:
+    ret
+
+SetupLevel1:
+    ; no walls
+    .return:
+    ret
+
+SetupLevel2:
+    mov al, WALL_COLOR
+    ; 1 wall across the middle 
+    moveRegToCell di, 0, 20
+    mov cx, CELL_COLS
+    rep stosb
 
     .return:
     ret
+
+SetupLevel3:
+    mov al, WALL_COLOR
+    ; 1 stipple wall across the middle 
+    moveRegToCell di, 0, 20
+    mov cx, CELL_COLS / 2
+    .loop:
+        stosb
+        inc di
+        loop .loop
+
+    .return:
+    ret
+
+
 
 MoveSnake:
     push bx
@@ -503,6 +620,35 @@ MoveSnake:
     ret
 
 CheckCollisions:
+    movzx ax, byte [snakeBodyPositions + 0]
+    movzx bx, byte [snakeBodyPositions + 1]
+
+    ; check what is there already
+    moveRegToCell si, ax, bx
+    lodsb
+    cmp al, APPLE_COLOR
+    je .caseApple
+    cmp al, WALL_COLOR
+    je .caseWall
+    cmp al, SNAKE_COLOR
+    je .caseSnake
+    jmp .endCase
+
+    .caseApple:
+        mov al, STATE_ATE_APPLE
+        call ChangeState
+        jmp .endCase
+    .caseWall:
+        mov al, STATE_CRASHED
+        call ChangeState
+        jmp .endCase
+    .caseSnake:
+        mov al, STATE_CRASHED
+        call ChangeState
+        jmp .endCase
+    .endCase:
+
+    .return:
     ret
 
 UpdateCells:
@@ -568,7 +714,8 @@ Draw:
     mov bx, ax
     and bx, REDRAW_APPLES
     jz  .return
-    call DrawApples
+    ;call DrawApples
+    call DrawFullRedraw
 
     .return:
     mov byte [redrawFlags], 0
