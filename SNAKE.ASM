@@ -25,27 +25,51 @@ MOVE_RIGHT          equ 4
 VGA_SEGMENT         equ 0a000h
 TICKS_PER_SECOND    equ 10
 
+EMPTY_COLOR         equ 0h
+WALL_COLOR          equ 0ch
 SNAKE_COLOR         equ 0ah
 APPLE_COLOR         equ 0dh
 
 SNAKE_MAX_LENGTH    equ 512
 
-%macro  moveDiToPixel 2 ; x, y
-%ifnum %2
-    mov di, %2 * 320
+CELL_ROWS           equ 50
+CELL_COLS           equ 80
+CELLS_COUNT         equ CELL_ROWS * CELL_COLS
+
+%macro  moveRegToCell 3 ; reg, x, y
+%ifnum %3
+    mov %1, %3 * 80
 %else
-    mov di, %2      ; di = y
-    shl di, 2       ; di = y * 4
-    add di, %2      ; di = y * 5
-    shl di, 6       ; di = y * 5 * 64 = y * 320
+    mov %1, %3      ; reg = y
+    shl %1, 2       ; reg = y * 4
+    add %1, %3      ; reg = y * 5
+    shl %1, 4       ; reg = y * 5 * 16 = y * 80
 %endif
-%if %1 != 0
-    add di, %1
+%if %2 != 0
+    add %1, %2
+%endif
+    add %1, cells
+%endmacro
+
+%macro  moveRegToPixel 3 ; reg, x, y
+%ifnum %3
+    mov %1, %3 * 320
+%else
+    mov %1, %3      ; reg = y
+    shl %1, 2       ; reg = y * 4
+    add %1, %3      ; reg = y * 5
+    shl %1, 6       ; reg = y * 5 * 64 = y * 320
+%endif
+%if %2 != 0
+    add di, %2
 %endif
 %endmacro
 
 %macro  colorDuplicated4TimeInEAX 1 ; color as byte
+%ifidn %1, al
+%else
     mov al, %1
+%endif
     mov ah, al
     push ax
     push ax
@@ -66,7 +90,9 @@ lastMoveDirection   resb 1      ; UP, DOWN, LEFT, RIGHT
 snakeBodyLength     resw 1
 ; snake head is first entry
 ; snake tail is last entry
-snakeBodyPositions  resb SNAKE_MAX_LENGTH * 2 ;x,y for each body segment
+snakeBodyPositions  resb (SNAKE_MAX_LENGTH * 2) + 1;x,y for each body segment
+
+cells               resb CELLS_COUNT
 
 
 section .text
@@ -76,9 +102,6 @@ start:
     mov ax, 13h
     int 10h
 
-    ; make es point to the framebuffer
-    mov ax, VGA_SEGMENT
-    mov es, ax
 
     ; init the global variables
     mov dword [mainLoopTicks], 0
@@ -233,6 +256,10 @@ ChangeState:
 ;
 
 Update:
+    ; prepare so we can write to the game cells with [es:di]
+    mov ax, ds
+    mov es, ax
+
     movzx bx, byte [gameState]
     shl bx, 1
     call [bx + .switchCallTable]
@@ -268,9 +295,11 @@ UpdateStateNewLevel:
 
 UpdateStateInLevel:
     mov eax, [gameStateTicks]
-    and eax, 07fh  ; only move once 127 ticks have passed since last time
+    and eax, 07h  ; only move once 8 ticks have passed since last time
     jnz .return
     call MoveSnake
+    call CheckCollisions
+    call UpdateCells
     .return:
     ret
 
@@ -296,35 +325,101 @@ SetupLevel:
     
     shl bx, 1
     mov ax, (160 / 4) - 10
-    .loop:
+    .loopSetupSnake:
         mov byte [bx + snakeBodyPositions], al
         mov byte [bx + snakeBodyPositions + 1], 100 / 4
         inc ax
         sub bx, 2
-        jge .loop
+        jge .loopSetupSnake
 
-    ; TODO clear out the board
+    ; clear out the board
+    mov bx, cells
+    mov cx, CELLS_COUNT / 4
+    .loopClearBoard:
+        mov dword [bx], 0
+        add bx, 4
+        loop .loopClearBoard
+
 
     ; Start heading right
     mov byte [nextMoveDirection], MOVE_RIGHT
+
+    call UpdateCells
+
+    ; Setup the new level walls
+    mov al, [currentLevel]
+    ;cmp al, 0
+    ;jne .level1
+    call SetupLevel0
+    jmp .return
+
+    .level1:
+    cmp al, 1
+    jne .return
+    ; TODO level 1
+    
 
     .return:
     pop bx
     pop ax
     ret
 
+SetupLevel0:
+    mov al, WALL_COLOR
+    ; top wall
+    moveRegToCell di, 0, 0
+    mov cx, CELL_COLS
+    rep stosb
+
+    ; left wall
+    moveRegToCell di, 0, 1
+    mov cx, CELL_ROWS - 2
+    .left:
+        stosb
+        add di, CELL_COLS - 1
+        loop .left
+    
+    ; right wall
+    moveRegToCell di, CELL_COLS - 1, 1
+    mov cx, CELL_ROWS - 2
+    .right:
+        stosb
+        add di, CELL_COLS - 1
+        loop .right
+
+    ; bottom wall
+    moveRegToCell di, 0, (CELL_ROWS - 1)
+    mov cx, CELL_COLS
+    rep stosb
+
+
+    ; first Apple
+    moveRegToCell di, 10, 10
+    mov al, APPLE_COLOR
+    stosb
+
+    .return:
+    ret
+
 MoveSnake:
     push bx
     push cx
 
+    ;jmp .moveHead
     ; move all the snake segments down one step
-    mov bx, [snakeBodyLength]
-    shl bx, 1
-    .loop:
-        mov ax, [bx + snakeBodyPositions - 2]
-        mov [bx + snakeBodyPositions], ax
-        sub bx, 2
-        jnz .loop
+    mov cx, [snakeBodyLength]
+    sub cx, 1
+    mov si, cx
+    shl si, 1
+    sub si, 2
+    add si, snakeBodyPositions 
+    mov di, si
+    add di, 2                   
+    ; si = (word *)&snakeBodyPositions[snakeBodyLength - 1]
+    ; di = (word *)&snakeBodyPositions[snakeBodyLength]
+    std
+    rep movsw                   ; *(di--) = (*si--)
+    cld
     
     .moveHead:
     movzx ax, byte [snakeBodyPositions + 0]
@@ -392,122 +487,70 @@ MoveSnake:
     pop bx
     ret
 
+CheckCollisions:
+    ret
+
+UpdateCells:
+    ; clear the existing snake cells then write the snake to the cells again
+    push bx
+    push cx
+
+    moveRegToCell si, 0, 0
+    mov cx, CELLS_COUNT
+    .clearLoop:
+        lodsb
+        cmp al, SNAKE_COLOR
+        jne .clearLoopEnd
+        mov byte [si - 1], EMPTY_COLOR
+        .clearLoopEnd:
+        loop .clearLoop
+
+    mov si, snakeBodyPositions
+    mov cx, [snakeBodyLength]
+    .snakeLoop:
+        lodsw ;x=al, y=ah
+        movzx bx, ah
+        xor ah, ah
+        moveRegToCell di, ax, bx
+        mov al, SNAKE_COLOR
+        stosb
+        loop .snakeLoop
+
+    .return:
+    pop cx
+    pop bx
+    ret
+
 ; ---- Draw Routines -----
 ; Draw
-;   +-- DrawLevel
-;   |       +-- DrawLevel0
-;   |
-;   +-- DrawApple
-;   |
-;   +-- DrawSnake
+;   Just loop through the cells and draw them as their type
 
 Draw:
     ; make es point to the framebuffer
     mov ax, VGA_SEGMENT
     mov es, ax
 
-    movzx ax, byte [currentLevel]    ; level number
-    call DrawLevel
-    call DrawApple
-    call DrawSnake
-    ret
-
-
-; al = level
-DrawLevel:
-    cmp al, 0
-    jne .level1
-    call DrawLevel0
-    jmp .return
-    .level1:
-    cmp al, 1
-    jne .level2
-    call DrawLevel1
-    jmp .return
-    .level2:
-    .return:
-    ret
-
-DrawLevel0:
-    moveDiToPixel 0, 0
-    colorDuplicated4TimeInEAX 09h      ; level 0 color
-    mov cx, (320 / 4) * 4   ; 4 rows
-    .topRow:
-    rep stosd
-
-    mov cx, 200 - 8         ; all rows but 8
-    .leftAndRight:
-    stosd
-    add di, 320 - 8
-    stosd
-    loop .leftAndRight
-
-    mov cx, (320 / 4) * 4   ; 4 rows
-    .bottomRow:
-    rep stosd
-
-    .return:
-    ret
-
-DrawLevel1:
-    .return:
-    ret
-
-
-DrawApple:
-    colorDuplicated4TimeInEAX APPLE_COLOR
-    moveDiToPixel 40, 40
-    stosd
-    add di, 320 - 4
-    stosd
-    add di, 320 - 4
-    stosd
-    add di, 320 - 4
-    stosd
-    ret
-
-DrawSnake:
-    push bx
-
-    mov cx, [snakeBodyLength]
-    cmp cx, 1
-    jl .return
-
-    .eraseLastTail:
-    colorDuplicated4TimeInEAX 0
-    call localFuncDrawBodySegment
-    dec cx
-
-    .drawBody:
-    colorDuplicated4TimeInEAX SNAKE_COLOR
-    .loop:
-        call localFuncDrawBodySegment
-        dec cx
-        jge .loop
-
-    .return:
-    pop bx
-    ret
-
-    ; eax = 4 x color, cx = segment index
-    ; bx, dx, di clobbered
-    localFuncDrawBodySegment:
+    moveRegToPixel di, 0, 0
+    mov si, cells
+    mov cx, CELL_ROWS
+    .rowLoop:
         push cx
-        mov bx, cx
-        shl bx, 1
-        add bx, snakeBodyPositions
-        movzx cx, byte [bx]
-        movzx dx, byte [bx + 1]
-        ; make them into pixel -> cell coorinates * 4 = pixel coordinates
-        shl cx, 2
-        shl dx, 2
-        moveDiToPixel cx, dx
-        stosd
-        add di, 320 - 4
-        stosd
-        add di, 320 - 4
-        stosd
-        add di, 320 - 4
-        stosd
+        mov cx, CELL_COLS
+        .colLoop:
+            lodsb ; cell color in al
+            ;colorDuplicated4TimeInEAX al
+            mov ah, al
+            times 2 stosw
+            add di, 320 - 4
+            times 2 stosw
+            add di, 320 - 4
+            times 2 stosw
+            add di, 320 - 4
+            times 2 stosw
+            sub di, 320 * 3
+            loop .colLoop
         pop cx
-        ret
+        add di, 320 * 3    ; jump 4 lines down
+        loop .rowLoop
+    .return:
+    ret
