@@ -25,6 +25,12 @@ MOVE_RIGHT          equ 4
 VGA_SEGMENT         equ 0a000h
 TICKS_PER_SECOND    equ 10
 
+REDRAW_WALLS            equ 1h
+REDRAW_SNAKE            equ 2h
+REDRAW_HEAD_AND_TAIL    equ 4h
+REDRAW_APPLES           equ 8h
+REDRAW_ALL              equ REDRAW_WALLS + REDRAW_SNAKE + REDRAW_HEAD_AND_TAIL + REDRAW_APPLES
+
 EMPTY_COLOR         equ 0h
 WALL_COLOR          equ 0ch
 SNAKE_COLOR         equ 0ah
@@ -79,6 +85,8 @@ CELLS_COUNT         equ CELL_ROWS * CELL_COLS
 section .bss
 mainLoopTicks       resd 1
 
+redrawFlags         resb 1
+
 gameState           resb 1
 gameStateTicks      resd 1
 
@@ -105,6 +113,7 @@ start:
 
     ; init the global variables
     mov dword [mainLoopTicks], 0
+    mov byte [redrawFlags], REDRAW_ALL
     mov byte [gameState], STATE_INTRO
     mov dword [gameStateTicks], 0
     mov byte [currentLevel], 0
@@ -134,7 +143,7 @@ start:
     .afterKeyEventHandler:
 
     call Update
-    
+
     call Draw
 
     add dword [mainLoopTicks], 1
@@ -143,7 +152,7 @@ start:
 
 
 .endGame:
-    
+
     ; back to text mode
     mov ax, 3
     int 10h
@@ -295,7 +304,7 @@ UpdateStateNewLevel:
 
 UpdateStateInLevel:
     mov eax, [gameStateTicks]
-    and eax, 07h  ; only move once 8 ticks have passed since last time
+    and eax, 0fffh  ; only move once (1 << 12) ticks have passed since last time
     jnz .return
     call MoveSnake
     call CheckCollisions
@@ -360,6 +369,8 @@ SetupLevel:
     
 
     .return:
+    mov byte [redrawFlags], REDRAW_ALL
+
     pop bx
     pop ax
     ret
@@ -482,6 +493,11 @@ MoveSnake:
     mov [snakeBodyPositions + 0], al
     mov [snakeBodyPositions + 1], bl
 
+    ; Tell Draw we need to update the tail and head pixels
+    mov al, [redrawFlags]
+    or al, REDRAW_HEAD_AND_TAIL
+    mov [redrawFlags], al
+
     .return:
     pop cx
     pop bx
@@ -530,15 +546,45 @@ Draw:
     mov ax, VGA_SEGMENT
     mov es, ax
 
+    movzx ax, byte [redrawFlags]
+    cmp ax, REDRAW_ALL
+    jne .drawSubset
+    call DrawFullRedraw
+    jmp .return
+
+    .drawSubset:
+    mov bx, ax
+    and bx, REDRAW_SNAKE
+    jz  .testDrawHeadAndTail
+    call DrawSnake
+    jmp .testDrawApples
+
+    .testDrawHeadAndTail:
+    mov bx, ax
+    and bx, REDRAW_HEAD_AND_TAIL
+    jz  .return
+    call DrawSnake
+    ; TODO optimized
+    ;call DrawSnakeHeadAndTail
+
+    .testDrawApples:
+    mov bx, ax
+    and bx, REDRAW_APPLES
+    jz  .return
+    call DrawApples
+
+    .return:
+    mov byte [redrawFlags], 0
+    ret
+
+DrawFullRedraw:
     moveRegToPixel di, 0, 0
     mov si, cells
     mov cx, CELL_ROWS
     .rowLoop:
-        push cx
-        mov cx, CELL_COLS
+        mov dx, CELL_COLS
         .colLoop:
             lodsb ; cell color in al
-            ;colorDuplicated4TimeInEAX al
             mov ah, al
             times 2 stosw
             add di, 320 - 4
@@ -548,9 +594,54 @@ Draw:
             add di, 320 - 4
             times 2 stosw
             sub di, 320 * 3
-            loop .colLoop
-        pop cx
-        add di, 320 * 3    ; jump 4 lines down
+            dec dx
+            jnz .colLoop
+        add di, 320 * 3
         loop .rowLoop
     .return:
+    ret
+
+DrawSnake:
+    push ax
+    mov si, snakeBodyPositions
+    mov cx, [snakeBodyLength]
+    .clearTail:
+        mov bx, cx
+        mov ax, [si + bx]
+        movzx bx, ah
+        xor ah, ah
+        shl ax, 2
+        shl bx, 2
+        moveRegToPixel di, ax, bx
+        colorDuplicated4TimeInEAX EMPTY_COLOR
+        stosd
+        add di, 320 - 4
+        stosd
+        add di, 320 - 4
+        stosd
+        add di, 320 - 4
+        stosd
+
+    .loop:
+        lodsw
+        movzx bx, ah
+        xor ah, ah
+        shl ax, 2
+        shl bx, 2
+        moveRegToPixel di, ax, bx
+        colorDuplicated4TimeInEAX SNAKE_COLOR
+        stosd
+        add di, 320 - 4
+        stosd
+        add di, 320 - 4
+        stosd
+        add di, 320 - 4
+        stosd
+        loop .loop
+
+    .return:
+    pop ax
+    ret
+
+DrawApples:
     ret
