@@ -419,7 +419,6 @@ MoveSnake:
     ;jmp .moveHead
     ; move all the snake segments down one step
     mov cx, [snakeBodyLength]
-    sub cx, 1
     mov si, cx
     shl si, 1
     sub si, 2
@@ -607,6 +606,7 @@ DrawSnake:
     mov cx, [snakeBodyLength]
     .clearTail:
         mov bx, cx
+        shl bx, 1
         mov ax, [si + bx]
         movzx bx, ah
         xor ah, ah
